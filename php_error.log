@@ -1,0 +1,5 @@
+[22-Feb-2025 11:51:42 Asia/Jakarta] PHP Fatal error:  Uncaught mysqli_sql_exception: Unknown column 'tc.signature' in 'SELECT' in /home/cfcy1736/public_html/traine/export_excel.php:44
+Stack trace:
+#0 /home/cfcy1736/public_html/traine/export_excel.php(44): mysqli->query()
+#1 {main}
+  thrown in /home/cfcy1736/public_html/traine/export_excel.php on line 44
