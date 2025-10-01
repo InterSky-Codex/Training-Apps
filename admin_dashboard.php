@@ -852,4 +852,68 @@ document.addEventListener('DOMContentLoaded', function(){
 });
 </script>
 
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+
+    // Delegated handler untuk tombol delete pada detail (mencakup beberapa kemungkinan kelas/atribut)
+    document.body.addEventListener('click', function(e){
+        const btn = e.target.closest('[data-action="delete-detail"], .delete-detail, .delete-btn, .btn-delete-detail');
+        if (!btn) return;
+
+        // ambil id dari data-id atau data-id-detail atau href query
+        let id = btn.dataset.id || btn.dataset.detailId || btn.dataset.recordId;
+        if (!id) {
+            // coba parse dari href jika tombol link seperti ?id=123
+            const href = btn.getAttribute('href') || '';
+            const m = href.match(/[?&]id=(\d+)/);
+            if (m) id = m[1];
+        }
+        if (!id) {
+            Swal.fire('Error', 'ID tidak tersedia untuk penghapusan.', 'error');
+            return;
+        }
+
+        Swal.fire({
+            title: 'Hapus data?',
+            text: 'Data akan dihapus permanen. Lanjutkan?',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Ya, hapus',
+            cancelButtonText: 'Batal'
+        }).then((res) => {
+            if (!res.isConfirmed) return;
+
+            // kirim POST ke delete_detail.php
+            fetch('delete_detail.php', {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({ id: id })
+            })
+            .then(r => r.json().catch(()=>({success:false, message:'Invalid JSON response'})))
+            .then(json => {
+                if (json && json.success) {
+                    Swal.fire('Berhasil', json.message || 'Record dihapus.', 'success')
+                        .then(()=> {
+                            // jika tombol berada di baris tabel, hapus baris; jika melihat detail, reload atau redirect ke list
+                            const row = btn.closest('tr');
+                            if (row) row.remove();
+                            else location.reload();
+                        });
+                } else {
+                    Swal.fire('Gagal', json?.message || 'Gagal menghapus.', 'error');
+                }
+            })
+            .catch(err => {
+                console.error('Delete error:', err);
+                Swal.fire('Error', 'Terjadi kesalahan saat menghubungi server.', 'error');
+            });
+        });
+    });
+
+});
+</script>
+
 </body>

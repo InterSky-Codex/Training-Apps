@@ -214,9 +214,9 @@ $hasRows = ($result && $result->num_rows > 0);
         const form = document.getElementById('participant-form');
         const canvas = document.getElementById("signature-pad");
         const signatureInput = document.getElementById("p_signature");
-        let signaturePad = null; // inisialisasi sudah ada di file, pastikan tetap
+        let signaturePad = null;
 
-        // hanya gunakan tombol Edit untuk membuka modal (sisa kode edit sudah ada)
+        // buka modal edit
         document.body.addEventListener('click', function(e){
             const editBtn = e.target.closest && e.target.closest('.btn-edit');
             if (editBtn) {
@@ -226,16 +226,74 @@ $hasRows = ($result && $result->num_rows > 0);
                 document.getElementById('p_userid').value = editBtn.dataset.userid || '';
                 document.getElementById('p_dept').value = editBtn.dataset.dept || '';
                 document.getElementById('p_feedback').value = editBtn.dataset.feedback || '';
-                // muat signature ke canvas jika ada (existing code)
-                // signToLoad handling tetap dapat digunakan
-                signToLoad = editBtn.dataset.sign || '';
+                const signToLoad = editBtn.dataset.sign || '';
                 signatureInput.value = signToLoad || '';
+                // inisialisasi signaturePad saat diperlukan
+                try { signaturePad = new (window.SignaturePad || SignaturePad)(canvas); } catch(e){ signaturePad = null; }
+                // jika ada signature base64, tampilkan di canvas (opsional)
+                if (signaturePad && signToLoad && signToLoad.startsWith('data:image')) {
+                    const img = new Image();
+                    img.onload = function(){
+                        signaturePad.clear();
+                        const ctx = canvas.getContext('2d');
+                        ctx.clearRect(0,0,canvas.width,canvas.height);
+                        // draw image scaled to canvas
+                        const ratio = Math.min(canvas.width / img.width, canvas.height / img.height);
+                        const w = img.width * ratio, h = img.height * ratio;
+                        ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
+                    };
+                    img.src = signToLoad;
+                }
                 participantModal.show();
             }
-            // delete handler tetap sama...
+
+            // delete handler: konfirmasi lalu panggil delete_detail.php (POST)
+            const delBtn = e.target.closest && e.target.closest('.btn-delete');
+            if (delBtn) {
+                const id = delBtn.dataset.id;
+                if (!id) {
+                    Swal.fire('Error', 'ID tidak ditemukan.', 'error');
+                    return;
+                }
+                Swal.fire({
+                    title: 'Hapus data?',
+                    text: 'Data peserta akan dihapus permanen. Lanjutkan?',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: 'Ya, hapus',
+                    cancelButtonText: 'Batal'
+                }).then(async (res) => {
+                    if (!res.isConfirmed) return;
+                    try {
+                        const resp = await fetch('delete_detail.php', {
+                            method: 'POST',
+                            headers: {
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            },
+                            body: new URLSearchParams({ id: id })
+                        });
+                        const text = await resp.text();
+                        let data;
+                        try { data = JSON.parse(text); } catch(e) { data = { success: resp.ok, message: text }; }
+                        if (resp.ok && data && data.success) {
+                            Swal.fire('Berhasil', data.message || 'Record dihapus.', 'success').then(()=>{
+                                const row = document.querySelector('tr[data-id="'+id+'"]');
+                                if (row) row.remove();
+                                else location.reload();
+                            });
+                        } else {
+                            Swal.fire('Gagal', data?.message || ('HTTP ' + resp.status), 'error');
+                        }
+                    } catch (err) {
+                        console.error('delete error', err);
+                        Swal.fire('Error', 'Gagal menghubungi server.', 'error');
+                    }
+                });
+            }
         });
 
-        // submit: selalu panggil edit_detail.php
+        // submit edit form
         form && form.addEventListener('submit', async function(e){
             e.preventDefault();
             try {

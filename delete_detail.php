@@ -51,14 +51,26 @@ if ($stmt) {
 $conn->begin_transaction();
 
 try {
+    // delete related admin_titles first (if any)
+    $del_at = $conn->prepare("DELETE FROM admin_titles WHERE user_id = ?");
+    if ($del_at === false) {
+        throw new Exception('Prepare error (admin_titles): ' . $conn->error);
+    }
+    $del_at->bind_param("i", $id);
+    if (!$del_at->execute()) {
+        $del_at->close();
+        throw new Exception('Execute error (admin_titles): ' . $del_at->error);
+    }
+    $del_at->close();
+
     // delete the user/participant row
     $del = $conn->prepare("DELETE FROM users WHERE id = ?");
     if ($del === false) {
-        throw new Exception('Prepare error: ' . $conn->error);
+        throw new Exception('Prepare error (users): ' . $conn->error);
     }
     $del->bind_param("i", $id);
     if (!$del->execute()) {
-        throw new Exception('Execute error: ' . $del->error);
+        throw new Exception('Execute error (users): ' . $del->error);
     }
     $affected = $del->affected_rows;
     $del->close();
@@ -76,15 +88,17 @@ try {
         // only delete files stored in the uploads directory to avoid accidental removals
         $uploadsDir = realpath(__DIR__ . '/uploads');
         if ($uploadsDir !== false) {
+            $uploadsDir = rtrim($uploadsDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
             // signature may be a full URL or relative path or data URI
             // if data URI -> skip deletion
             if (stripos($signature, 'data:image') === false) {
                 // extract basename and construct safe path
-                $basename = basename(parse_url($signature, PHP_URL_PATH) ?: $signature);
-                $candidate = $uploadsDir . DIRECTORY_SEPARATOR . $basename;
+                $pathPart = parse_url($signature, PHP_URL_PATH) ?: $signature;
+                $basename = basename($pathPart);
+                $candidate = $uploadsDir . $basename;
                 // verify file is inside uploads dir
                 $real = realpath($candidate);
-                if ($real && str_starts_with($real, $uploadsDir) && is_file($real)) {
+                if ($real && strpos($real, $uploadsDir) === 0 && is_file($real)) {
                     @unlink($real); // suppress errors, deletion optional
                 }
             }
@@ -101,3 +115,4 @@ try {
     echo json_encode(['success' => false, 'message' => 'Gagal menghapus: ' . $e->getMessage()]);
     exit;
 }
+?>
