@@ -51,7 +51,8 @@ $hasRows = ($result && $result->num_rows > 0);
         .signature-no { color: white; background-color: red; padding: 5px 10px; border-radius: 5px; }
         .table tbody tr { border-bottom: 1px solid #dee2e6; }
         /* ukuran visual canvas diset di CSS, ukuran piksel sesuaikan di JS */
-        #signature-pad { width: 100%; height: 200px; border:1px solid #ccc; display:block; touch-action: none; }
+        /* visual height ditingkatkan supaya area tanda tangan lebih besar */
+        #signature-pad { width: 100%; height: 320px; border:1px solid #ccc; display:block; touch-action: none; }
         .empty-state { color: #6c757d; }
     </style>
 </head>
@@ -214,7 +215,45 @@ $hasRows = ($result && $result->num_rows > 0);
         const form = document.getElementById('participant-form');
         const canvas = document.getElementById("signature-pad");
         const signatureInput = document.getElementById("p_signature");
+        const clearBtn = document.getElementById('clear-signature');
         let signaturePad = null;
+
+        // helper: resize canvas for high-DPI screens
+        function resizeCanvas() {
+            if (!canvas) return;
+            // coba dapatkan ukuran visual; jika modal masih tersembunyi rect mungkin 0
+            let rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) {
+                // fallback: gunakan ukuran dari modal-body atau computed height CSS
+                const modalBody = participantModalEl.querySelector('.modal-body') || document.body;
+                const bodyRect = modalBody.getBoundingClientRect();
+                const computed = window.getComputedStyle(canvas);
+                const visualHeight = parseFloat(computed.height) || 320;
+                rect = {
+                    width: bodyRect.width || 600,
+                    height: visualHeight
+                };
+            }
+            const ratio = Math.max(window.devicePixelRatio || 1, 1);
+            canvas.width = Math.round(rect.width * ratio);
+            canvas.height = Math.round(rect.height * ratio);
+            canvas.style.width = rect.width + "px";
+            canvas.style.height = rect.height + "px";
+            const ctx = canvas.getContext("2d");
+            // reset transform and apply scaling for DPR
+            ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        }
+
+        function createSignaturePadInstance() {
+            try {
+                if (!signaturePad) {
+                    signaturePad = new (window.SignaturePad || SignaturePad)(canvas, { backgroundColor: 'rgba(0,0,0,0)' });
+                }
+            } catch(e){
+                console.error('signaturePad init error', e);
+                signaturePad = null;
+            }
+        }
 
         // buka modal edit
         document.body.addEventListener('click', function(e){
@@ -228,23 +267,14 @@ $hasRows = ($result && $result->num_rows > 0);
                 document.getElementById('p_feedback').value = editBtn.dataset.feedback || '';
                 const signToLoad = editBtn.dataset.sign || '';
                 signatureInput.value = signToLoad || '';
-                // inisialisasi signaturePad saat diperlukan
-                try { signaturePad = new (window.SignaturePad || SignaturePad)(canvas); } catch(e){ signaturePad = null; }
-                // jika ada signature base64, tampilkan di canvas (opsional)
-                if (signaturePad && signToLoad && signToLoad.startsWith('data:image')) {
-                    const img = new Image();
-                    img.onload = function(){
-                        signaturePad.clear();
-                        const ctx = canvas.getContext('2d');
-                        ctx.clearRect(0,0,canvas.width,canvas.height);
-                        // draw image scaled to canvas
-                        const ratio = Math.min(canvas.width / img.width, canvas.height / img.height);
-                        const w = img.width * ratio, h = img.height * ratio;
-                        ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
-                    };
-                    img.src = signToLoad;
-                }
+
+                // create instance if needed (don't rely on rect yet)
+                createSignaturePadInstance();
+
+                // show modal first, then resize & redraw in shown handler
                 participantModal.show();
+
+                // Remember: actual resize and image redraw handled in shown.bs.modal below
             }
 
             // delete handler: konfirmasi lalu panggil delete_detail.php (POST)
@@ -293,15 +323,79 @@ $hasRows = ($result && $result->num_rows > 0);
             }
         });
 
+        // clear signature button
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function(){
+                try {
+                    // ensure canvas properly sized then clear
+                    resizeCanvas();
+                    createSignaturePadInstance();
+                    if (signaturePad) signaturePad.clear();
+                    const ctx = canvas.getContext && canvas.getContext('2d');
+                    if (ctx) ctx.clearRect(0,0,canvas.width,canvas.height);
+                } catch(e){ console.error('clear signature error', e); }
+                // clear hidden input so server knows it's removed
+                if (signatureInput) signatureInput.value = '';
+            });
+        }
+
+        // handle modal shown to ensure canvas sizing and redraw existing signature
+        participantModalEl.addEventListener('shown.bs.modal', function(){
+            // ensure canvas gets correct visual rect (modal is visible now)
+            resizeCanvas();
+            createSignaturePadInstance();
+
+            // redraw existing base64 if present
+            const val = signatureInput.value || '';
+            if (signaturePad) {
+                signaturePad.clear();
+                if (val && val.startsWith('data:image')) {
+                    try {
+                        if (typeof signaturePad.fromDataURL === 'function') {
+                            signaturePad.fromDataURL(val);
+                        } else {
+                            // fallback draw image manually
+                            const img = new Image();
+                            img.onload = function(){
+                                const ctx = canvas.getContext('2d');
+                                ctx.clearRect(0,0,canvas.width,canvas.height);
+                                const rect = canvas.getBoundingClientRect();
+                                const ratio = Math.min(rect.width / img.width, rect.height / img.height);
+                                const w = img.width * ratio, h = img.height * ratio;
+                                ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
+                            };
+                            img.src = val;
+                        }
+                    } catch(e){ console.error('fromDataURL error', e); }
+                }
+            }
+        });
+
+        // adjust canvas on window resize while modal open
+        window.addEventListener('resize', function(){
+            try {
+                if (participantModalEl.classList.contains('show')) {
+                    const data = (signaturePad && !signaturePad.isEmpty()) ? signaturePad.toDataURL() : signatureInput.value || '';
+                    resizeCanvas();
+                    if (data && data.startsWith('data:image') && signaturePad && typeof signaturePad.fromDataURL === 'function') {
+                        try { signaturePad.fromDataURL(data); } catch(e){ /* ignore */ }
+                    }
+                }
+            } catch(e){ }
+        });
+
         // submit edit form
         form && form.addEventListener('submit', async function(e){
             e.preventDefault();
             try {
                 if (!signaturePad) {
-                    try { signaturePad = new (window.SignaturePad || SignaturePad)(canvas); } catch(e){ signaturePad = null; }
+                    try { initSignaturePad(); } catch(e){ signaturePad = null; }
                 }
                 if (signaturePad && !signaturePad.isEmpty()) {
                     try { signatureInput.value = signaturePad.toDataURL("image/png"); } catch(e){}
+                } else {
+                    // ensure hidden input empty if pad empty
+                    signatureInput.value = signatureInput.value && signatureInput.value.startsWith('data:image') ? signatureInput.value : '';
                 }
             } catch(err){
                 console.error('prepare signature error', err);
